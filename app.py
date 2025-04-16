@@ -1,45 +1,49 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import openai
+import re
 import os
 
 app = Flask(__name__)
 CORS(app)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
+# Dummy-Sicherheitsbewertung
+def simple_score(text):
+    text_lower = text.lower()
+    if any(word in text_lower for word in ["iban", "kreditkarte", "telefonnummer", "handynummer"]):
+        return 85, "🔴 Hohes Risiko erkannt (85 %)"
+    elif "foto" in text_lower or "peinlich" in text_lower:
+        return 40, "🟡 Mittleres Risiko erkannt (40 %)"
+    return 5, "🟢 Kein Risiko erkennbar (5 %)"
 
-@app.route("/")
-def index():
-    return "✅ achtung.live API ist aktiv."
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    data = request.get_json()
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"score": 0, "message": "⚠️ Kein gültiger Text erkannt."}), 400
+    score, message = simple_score(text)
+    return jsonify({"score": score, "message": message})
 
 @app.route("/debug-gpt", methods=["POST"])
 def debug_gpt():
     data = request.get_json()
     text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"gpt_raw": "Bitte gib einen Text ein, den ich analysieren kann."})
 
-    if not text or len(text) < 5:
-        return jsonify({"gpt_raw": "Bitte gib einen vollständigen Text ein, den ich bewerten kann."})
+    # GPT-Antwort Dummy-Version
+    text_lower = text.lower()
+    if "iban" in text_lower:
+        gpt_text = "Das sieht aus wie eine Bankverbindung. Du solltest lieber schreiben: [Bankdaten] oder es weglassen."
+    elif "foto" in text_lower and "besoffen" in text_lower:
+        gpt_text = "Dieser Text könnte peinlich wirken. Du könntest stattdessen schreiben: 'Hier das lustige Bild von der Feier'."
+    elif "telefonnummer" in text_lower or re.search(r"\b01\d{7,}\b", text_lower):
+        gpt_text = "Persönliche Telefonnummern gehören nicht ins Netz. Ersetze sie besser mit: [Handynummer]."
+    else:
+        gpt_text = "Keine sensiblen Inhalte erkannt."
 
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Du bist ein Datenschutz- und Kommunikationsberater."},
-                {"role": "user", "content": f"""
-Analysiere folgenden Text auf Datenschutz- oder Kommunikationsrisiken:
+    return jsonify({"gpt_raw": gpt_text})
 
-"{text}"
-
-Gib eine klare, freundliche Empfehlung in 1–2 Sätzen, wie der Text sicherer formuliert werden kann.
-Keine JSON-Ausgabe. Keine Zusammenfassung. Nur die Empfehlung selbst.
-"""}
-            ],
-            temperature=0.7,
-            max_tokens=150
-        )
-
-        gpt_tip = response.choices[0].message.content.strip()
-        return jsonify({"gpt_raw": gpt_tip})
-
-    except Exception as e:
-        return jsonify({"gpt_raw": f"⚠️ GPT-Fehler: {str(e)}"})
+@app.route("/", methods=["GET"])
+def index():
+    return "✅ achtung.live API ist aktiv."
