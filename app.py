@@ -1,62 +1,45 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from linkscanner import analyze_text
-import os
 import openai
+import os
 
 app = Flask(__name__)
 CORS(app)
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @app.route("/")
 def index():
     return "✅ achtung.live API ist aktiv."
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
-    data = request.get_json()
-    text = data.get("text", "")
-    result = analyze_text(text)
-    return jsonify(result)
-
 @app.route("/debug-gpt", methods=["POST"])
 def debug_gpt():
     data = request.get_json()
-    text = data.get("text", "")
+    text = data.get("text", "").strip()
 
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not text or len(text) < 5:
+        return jsonify({"gpt_raw": "Bitte gib einen vollständigen Text ein, den ich bewerten kann."})
 
     try:
-        gpt_prompt = (
-            "Bewerte den folgenden Text mit einem JSON-Objekt im Markdown-Format. "
-            "Antworte NICHT mit zusätzlichem Text, nur mit:\n"
-            "\n```json\n{\n"
-            "\"sem_risk_level\": \"hoch|mittel|gering\",\n"
-            "\"sem_einschaetzung\": \"...\",\n"
-            "\"sem_empfehlung\": \"...\"\n"
-            "}\n```\n\n"
-            "Text:  + text + "
-        )
-
-        gpt_response = openai.ChatCompletion.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[
-                {
-                    "role": "system",
-                    "content": "Du bist eine freundliche, klare und hilfreiche GPT-Analyse für Datenschutz und digitale Kommunikation."
-                },
-                {
-                    "role": "user",
-                    "content": gpt_prompt
-                }
-            ],
-            temperature=0.6
-        )
-        return jsonify({
-            "gpt_raw": gpt_response['choices'][0]['message']['content']
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
+                {"role": "system", "content": "Du bist ein Datenschutz- und Kommunikationsberater."},
+                {"role": "user", "content": f"""
+Analysiere folgenden Text auf Datenschutz- oder Kommunikationsrisiken:
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+"{text}"
+
+Gib eine klare, freundliche Empfehlung in 1–2 Sätzen, wie der Text sicherer formuliert werden kann.
+Keine JSON-Ausgabe. Keine Zusammenfassung. Nur die Empfehlung selbst.
+"""}
+            ],
+            temperature=0.7,
+            max_tokens=150
+        )
+
+        gpt_tip = response.choices[0].message.content.strip()
+        return jsonify({"gpt_raw": gpt_tip})
+
+    except Exception as e:
+        return jsonify({"gpt_raw": f"⚠️ GPT-Fehler: {str(e)}"})
