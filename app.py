@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify
 import re
+import os
+import requests
+
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -16,6 +19,30 @@ def analyze_text():
     result = analyze(text)
 
     return jsonify({"analysis": result})
+
+def check_url_safety(url):
+    api_key = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY")
+    if not api_key:
+        return "Fehlender API-Key"
+    
+    endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={api_key}"
+    payload = {
+        "client": {
+            "clientId": "achtung.live",
+            "clientVersion": "1.0"
+        },
+        "threatInfo": {
+            "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING"],
+            "platformTypes": ["ANY_PLATFORM"],
+            "threatEntryTypes": ["URL"],
+            "threatEntries": [{"url": url}]
+        }
+    }
+    headers = {"Content-Type": "application/json"}
+    response = requests.post(endpoint, json=payload, headers=headers)
+    
+    result = response.json()
+    return "unsicher" if result.get("matches") else "sicher"
 
 def analyze(text):
     # Beispiel: Suche nach IBAN (vereinfachtes Muster)
