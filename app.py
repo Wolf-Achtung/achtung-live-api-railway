@@ -1,105 +1,49 @@
 from flask import Flask, request, jsonify
+from linkscanner import scan_links
 import re
-import os
-import requests
 import json
-from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
 
-# Lade Emoji-Datenbank beim Start
-with open("emojiDatabase.json", "r", encoding="utf-8") as f:
+# 1. Sensible Textmuster
+text_patterns = [
+    {"pattern": r"\b(kreditkartennummer|iban|kontonummer|konto|zahlung)\b", "feedback": "Bitte keine Zahlungsdaten öffentlich teilen."},
+    {"pattern": r"\b(attest|krankenkasse|arzt|diagnose|gesundheit)\b", "feedback": "Vermeide es, Gesundheitsdaten öffentlich zu machen."},
+    {"pattern": r"\b(chef|vorgesetzter|firma|arbeitsplatz|arbeitgeber|müller \+ partner)\b", "feedback": "Kritik mit Klarnamen kann rechtliche Folgen haben."},
+    {"pattern": r"\b(urlaub|reise|ausland|fliegen|am strand)\b", "feedback": "Reiseinfos können Einbrecher aufmerksam machen – lieber diskret teilen."},
+    {"pattern": r"screenshot|whatsapp|chat|messenger", "feedback": "Screenshots können sensible Daten enthalten – Vorsicht bei Weitergabe."}
+]
+
+# 2. Emoji-Datenbank aus JSON laden
+with open("emojiDatabase.json", encoding="utf-8") as f:
     emoji_data = json.load(f)
 
-@app.route('/')
-def index():
-    return 'achtung.live API aktiv.'
+@app.route("/")
+def home():
+    return "achtung.live API läuft."
 
-@app.route('/analyze', methods=['POST'])
-def analyze_text():
+@app.route("/analyze", methods=["POST"])
+def analyze():
     data = request.get_json()
-    if not data or 'text' not in data:
-        return jsonify({"error": "Kein Text übermittelt."}), 400
+    text = data.get("text", "")
+    feedback = []
 
-    text = data['text']
-    result = analyze(text)
-    return jsonify({"analysis": result})
+    # TEXTSCANNER
+    for rule in text_patterns:
+        if re.search(rule["pattern"], text, re.IGNORECASE):
+            feedback.append(rule["feedback"])
 
-def check_url_safety(url):
-    api_key = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY")
-    if not api_key:
-        return "API-Key fehlt"
-    endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={api_key}"
-    payload = {
-        "client": {
-            "clientId": "achtung.live",
-            "clientVersion": "1.0"
-        },
-        "threatInfo": {
-            "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING"],
-            "platformTypes": ["ANY_PLATFORM"],
-            "threatEntryTypes": ["URL"],
-            "threatEntries": [{"url": url}]
-        }
-    }
-    headers = {"Content-Type": "application/json"}
-    try:
-        response = requests.post(endpoint, json=payload, headers=headers)
-        result = response.json()
-        return "unsicher" if result.get("matches") else "sicher"
-    except Exception as e:
-        return f"Fehler bei URL-Prüfung: {str(e)}"
-
-def check_all_urls(text):
-    urls = re.findall(r'https?://[^\s]+', text)
-    if not urls:
-        return ""
-    results = []
-    for url in urls:
-        status = check_url_safety(url)
-        if status == "unsicher":
-            results.append(f"⚠️ Der Link {url} gilt als *unsicher*.")
-        elif status == "sicher":
-            results.append(f"✅ Link geprüft: {url} scheint unbedenklich.")
-        else:
-            results.append(f"❗ Konnte {url} nicht prüfen ({status})")
-    return "\n".join(results)
-
-def analyze(text):
-    result_list = []
-
-    # Bankdaten
-    iban_pattern = r'\b[A-Z]{2}\d{2}(?:[ ]?\d{4}){4,5}\b'
-    simple_iban = r'\b\d{10,20}\b'
-    if re.search(iban_pattern, text) or re.search(simple_iban, text):
-        result_list.append("Achtung: Teile keine sensiblen Bankdaten wie IBANs oder Kreditkartennummern.")
-
-    # Passwort
-    if "passwort" in text.lower():
-        result_list.append("Achtung: Dein Passwort solltest du niemals teilen – ändere es regelmäßig.")
-
-    # Gesundheit
-    if any(kw in text.lower() for kw in ["krankheit", "depression", "diagnose", "therapie"]):
-        result_list.append("Achtung: Gesundheitsthemen sind privat – teile solche Informationen nur vertrauensvoll.")
-
-    # Urlaub/Standort
-    if re.search(r"\b(bin|bin gerade|wir sind|bin unterwegs).*?(urlaub|italien|mallorca|reise|unterwegs)\b", text.lower()):
-        result_list.append("Achtung: Standort- oder Urlaubsinfos können deine Abwesenheit verraten.")
-
-    # Emoji-Prüfung
+    # EMOJI-SCANNER
     for emoji, warnung in emoji_data.items():
         if emoji in text:
-            result_list.append(f"Emoji-Warnung zu {emoji}: {warnung}")
+            feedback.append(f"Emoji-Warnung: {warnung}")
 
-    # URL-Prüfung
-    url_feedback = check_all_urls(text)
-    if url_feedback:
-        result_list.append(url_feedback)
+    # LINKSCANNER
+    link_check = scan_links(text)
+    if link_check:
+        feedback.append(link_check)
 
-    if not result_list:
-        return ["Alles gut: Dein Text enthält keine offensichtlichen Risiken."]
-    return result_list
+    if not feedback:
+        feedback.append("⚠️ Hinweis: Dein Text enthält keine offensichtlichen Risiken – überprüfe dennoch sensible Infos wie Ort, Namen oder Screenshots.")
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    return jsonify({"feedback": feedback})
