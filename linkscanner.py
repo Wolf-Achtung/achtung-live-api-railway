@@ -1,51 +1,58 @@
 import re
+import requests
 
-# Liste bekannter gefährlicher Muster (einfach erweiterbar)
-PHISHING_PATTERNS = [
-    r"paypai\.de",         # Typosquatting von PayPal
-    r"secure-login",       # häufige Fake-Login-Pfade
-    r"update-verifizierung", 
-    r"konto-sperrung", 
-    r"login-\w+\.com", 
-    r"\.ru",               # ggf. für Tests auffällig
-    r"bit\.ly",            # Kurzlinks (können verschleiern)
+# Liste verdächtiger Domainmuster (einfach erweiterbar)
+SUSPICIOUS_PATTERNS = [
+    r"paypal\.(?!com)",       # z. B. paypal-login.net
+    r"paypai\.",              # häufige Falschschreibung von PayPal
+    r"login[-.]?secure",      # typisches Muster
+    r"(web|login)[\.-]?account", 
+    r"banking[-.]?verify"
 ]
 
-# Whitelist vertrauenswürdiger Domains
+# Liste vertrauenswürdiger Domains (Whitelist)
 TRUSTED_DOMAINS = [
-    "https://www.tagesschau.de",
-    "https://heise.de",
-    "https://netzpolitik.org",
-    "https://www.bsi.bund.de"
+    "tagesschau.de",
+    "zeit.de",
+    "spiegel.de",
+    "bund.de",
+    "europa.eu"
 ]
 
-def is_trusted(url):
-    for trusted in TRUSTED_DOMAINS:
-        if url.startswith(trusted):
+def extract_links(text):
+    # Extrahiert http(s)-Links aus dem Text
+    return re.findall(r"https?://[^\s]+", text)
+
+def is_suspicious_link(link):
+    for pattern in SUSPICIOUS_PATTERNS:
+        if re.search(pattern, link, re.IGNORECASE):
             return True
     return False
 
-def looks_phishy(url):
-    for pattern in PHISHING_PATTERNS:
-        if re.search(pattern, url, re.IGNORECASE):
-            return True, f"enthält ein typisches Phishing-Muster ({pattern})"
-    return False, ""
+def is_trusted(link):
+    for domain in TRUSTED_DOMAINS:
+        if domain in link:
+            return True
+    return False
 
-def scan_links(urls):
+def scan_links(text):
     results = []
-    for url in urls:
-        url = url.strip(".,;!?\"'")
-        if is_trusted(url):
+    links = extract_links(text)
+    
+    for link in links:
+        if is_suspicious_link(link):
             results.append({
-                "url": url,
-                "risk": False,
-                "reason": "sieht unauffällig aus."
+                "link": link,
+                "result": f"🚨 Verdächtiger Link erkannt: {link} enthält ein typisches Phishing-Muster."
+            })
+        elif is_trusted(link):
+            results.append({
+                "link": link,
+                "result": f"✅ Link geprüft: {link} scheint unbedenklich."
             })
         else:
-            is_phishy, reason = looks_phishy(url)
             results.append({
-                "url": url,
-                "risk": is_phishy,
-                "reason": reason if is_phishy else "scheint unbedenklich."
+                "link": link,
+                "result": f"ℹ️ Link gefunden: {link} konnte nicht eindeutig verifiziert werden."
             })
     return results
